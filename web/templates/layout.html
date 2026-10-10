@@ -1,0 +1,42 @@
+{{/* Шапка — отдельный именованный шаблон, вызывается через {{template "header" .}} */}}
+{{define "header"}}
+<header class="site-header">
+    <div class="container">
+        <a class="brand" href="/">Учёт трат</a>
+        <nav>
+            <a href="/" {{if eq .Active "home"}}class="active"{{end}}>Главная</a>
+            <a href="/expenses" {{if eq .Active "expenses"}}class="active"{{end}}>Траты</a>
+            <a href="/expenses/new" {{if eq .Active "new"}}class="active"{{end}}>Добавить</a>
+            <a href="/about" {{if eq .Active "about"}}class="active"{{end}}>О проекте</a>
+        </nav>
+    </div>
+</header>
+{{end}}
+
+{{/* Подвал — тоже отдельный именованный шаблон */}}
+{{define "footer"}}
+<footer class="site-footer">
+    <div class="container">Учебный проект на Go · html/template</div>
+</footer>
+{{end}}
+
+{{/* Главный каркас страницы. Каждая страница подставляет свой кусок в block "content" */}}
+{{define "layout"}}<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{.Title}} — Учёт трат</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    {{template "header" .}}
+
+    <main class="container">
+        {{block "content" .}}{{end}}
+    </main>
+
+    {{template "footer" .}}
+</body>
+</html>
+{{end}}

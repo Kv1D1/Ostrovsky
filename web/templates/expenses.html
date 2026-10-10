@@ -1,0 +1,36 @@
+{{define "content"}}
+<h1>Список трат</h1>
+
+{{if .Expenses}}
+<table>
+    <thead>
+        <tr>
+            <th>#</th>
+            <th>Дата</th>
+            <th>Описание</th>
+            <th class="num">Сумма</th>
+        </tr>
+    </thead>
+    <tbody>
+        {{range .Expenses}}
+        <tr>
+            <td>{{.ID}}</td>
+            <td>{{.Date.Format "02.01.2006"}}</td>
+            <td>{{.Description}}</td>
+            <td class="num">{{printf "%.2f" .Amount}}</td>
+        </tr>
+        {{end}}
+    </tbody>
+    <tfoot>
+        <tr>
+            <th colspan="3">Итого</th>
+            <th class="num">{{printf "%.2f" .Total}}</th>
+        </tr>
+    </tfoot>
+</table>
+{{else}}
+<p class="empty">Трат пока нет.</p>
+{{end}}
+
+<p><a class="btn" href="/expenses/new">Добавить трату</a></p>
+{{end}}
