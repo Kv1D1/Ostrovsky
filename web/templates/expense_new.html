@@ -12,6 +12,14 @@
     <input type="text" id="description" name="description"
            placeholder="например, Продукты" value="{{.Form.Description}}" required>
 
+    <label for="category">Категория</label>
+    <select id="category" name="category" required>
+        <option value="">Выберите категорию</option>
+        {{range .Categories}}
+        <option value="{{.ID}}" {{if eq .ID $.Form.CategoryID}}selected{{end}}>{{.Name}}</option>
+        {{end}}
+    </select>
+
     <label for="date">Дата</label>
     <input type="date" id="date" name="date" value="{{.Form.Date}}" required>
 

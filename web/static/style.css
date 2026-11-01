@@ -26,10 +26,21 @@ thead th { background: #eef1f5; }
 tfoot th { background: #eef1f5; }
 .empty { color: #777; }
 
+.actions { white-space: nowrap; }
+.actions a { margin-right: 8px; }
+
 form { background: #fff; padding: 20px; border-radius: 8px; max-width: 420px; }
 label { display: block; margin: 12px 0 4px; font-weight: 600; }
-input { width: 100%; padding: 8px 10px; border: 1px solid #c5cbd3; border-radius: 6px; font-size: 1rem; }
+input, select { width: 100%; padding: 8px 10px; border: 1px solid #c5cbd3; border-radius: 6px; font-size: 1rem; background: #fff; }
 form .btn { margin-top: 16px; margin-right: 12px; }
+
+form.filter-form { max-width: none; display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 16px; }
+.filter-form .field { flex: 1 1 140px; }
+.filter-form label { margin: 0 0 4px; }
+form.filter-form .btn { margin: 0; }
+
+form.inline-form { display: inline; background: none; padding: 0; max-width: none; border-radius: 0; }
+form.inline-form .btn { margin: 0; }
 
 .btn {
     display: inline-block; padding: 8px 16px; background: #2f6fdb; color: #fff;
@@ -37,4 +48,7 @@ form .btn { margin-top: 16px; margin-right: 12px; }
 }
 .btn:hover { background: #2559b3; }
 .btn-secondary { background: #6b7a8f; }
+.btn-danger { background: #d64545; }
+.btn-danger:hover { background: #b83232; }
+.btn-small { padding: 4px 10px; font-size: .9rem; }
 .error { background: #fde8e8; color: #a12626; padding: 10px 12px; border-radius: 6px; max-width: 420px; }

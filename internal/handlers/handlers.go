@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -15,11 +16,14 @@ import (
 )
 
 type PageData struct {
-	Title    string
-	Active   string // подсветка пункта меню
-	Expenses []models.Expense
-	Total    float64
+	Title      string
+	Active     string
+	Expenses   []models.Expense
+	Total      float64
+	Categories []models.Category
+	Filter     models.ExpenseFilter
 
+	ID    int
 	Form  FormValues
 	Error string
 }
@@ -28,16 +32,18 @@ type FormValues struct {
 	Amount      string
 	Description string
 	Date        string
+	CategoryID  int
 }
 
 type App struct {
-	store *models.ExpenseStore
-	pages map[string]*template.Template
+	repo       *models.ExpenseRepository
+	categories *models.CategoryRepository
+	pages      map[string]*template.Template
 }
 
-func New(store *models.ExpenseStore, templatesDir string) (*App, error) {
+func New(repo *models.ExpenseRepository, categories *models.CategoryRepository, templatesDir string) (*App, error) {
 	layout := filepath.Join(templatesDir, "layout.html")
-	names := []string{"home", "about", "expenses", "expense_new"}
+	names := []string{"home", "about", "expenses", "expense_new", "expense_edit"}
 
 	pages := make(map[string]*template.Template, len(names))
 	for _, name := range names {
@@ -48,7 +54,7 @@ func New(store *models.ExpenseStore, templatesDir string) (*App, error) {
 		}
 		pages[name] = t
 	}
-	return &App{store: store, pages: pages}, nil
+	return &App{repo: repo, categories: categories, pages: pages}, nil
 }
 
 func (a *App) render(w http.ResponseWriter, status int, page string, data PageData) {
@@ -66,6 +72,56 @@ func (a *App) render(w http.ResponseWriter, status int, page string, data PageDa
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	buf.WriteTo(w)
+}
+
+func (a *App) renderWithCategories(w http.ResponseWriter, status int, page string, data PageData) {
+	categories, err := a.categories.GetAll()
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+	data.Categories = categories
+	a.render(w, status, page, data)
+}
+
+func (a *App) serverError(w http.ResponseWriter, err error) {
+	log.Printf("ошибка: %v", err)
+	http.Error(w, "внутренняя ошибка сервера", http.StatusInternalServerError)
+}
+
+func readForm(r *http.Request) FormValues {
+	categoryID, _ := strconv.Atoi(r.FormValue("category"))
+	return FormValues{
+		Amount:      strings.TrimSpace(r.FormValue("amount")),
+		Description: strings.TrimSpace(r.FormValue("description")),
+		Date:        strings.TrimSpace(r.FormValue("date")),
+		CategoryID:  categoryID,
+	}
+}
+
+func (a *App) checkForm(form FormValues) (float64, time.Time, string) {
+	amount, err := strconv.ParseFloat(strings.ReplaceAll(form.Amount, ",", "."), 64)
+	if err != nil || amount <= 0 {
+		return 0, time.Time{}, "Сумма должна быть положительным числом."
+	}
+	if form.Description == "" {
+		return 0, time.Time{}, "Описание не может быть пустым."
+	}
+	date, err := time.Parse("2006-01-02", form.Date)
+	if err != nil {
+		return 0, time.Time{}, "Укажите корректную дату."
+	}
+	if _, err := a.categories.GetByID(form.CategoryID); err != nil {
+		return 0, time.Time{}, "Выберите категорию из списка."
+	}
+	return amount, date, ""
+}
+
+func readDate(value string) string {
+	if _, err := time.Parse("2006-01-02", value); err != nil {
+		return ""
+	}
+	return value
 }
 
 func (a *App) Home(w http.ResponseWriter, r *http.Request) {
@@ -92,16 +148,37 @@ func (a *App) Ping(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) ExpensesList(w http.ResponseWriter, r *http.Request) {
-	a.render(w, http.StatusOK, "expenses", PageData{
+	query := r.URL.Query()
+
+	categoryID, _ := strconv.Atoi(query.Get("category"))
+	filter := models.ExpenseFilter{
+		CategoryID: categoryID,
+		DateFrom:   readDate(query.Get("from")),
+		DateTo:     readDate(query.Get("to")),
+	}
+
+	expenses, err := a.repo.GetAll(filter)
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+
+	var total float64
+	for _, e := range expenses {
+		total += e.Amount
+	}
+
+	a.renderWithCategories(w, http.StatusOK, "expenses", PageData{
 		Title:    "Список трат",
 		Active:   "expenses",
-		Expenses: a.store.All(),
-		Total:    a.store.Total(),
+		Expenses: expenses,
+		Total:    total,
+		Filter:   filter,
 	})
 }
 
 func (a *App) ExpenseNewForm(w http.ResponseWriter, r *http.Request) {
-	a.render(w, http.StatusOK, "expense_new", PageData{
+	a.renderWithCategories(w, http.StatusOK, "expense_new", PageData{
 		Title:  "Новая трата",
 		Active: "new",
 		Form:   FormValues{Date: time.Now().Format("2006-01-02")},
@@ -114,34 +191,105 @@ func (a *App) ExpenseCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	form := FormValues{
-		Amount:      strings.TrimSpace(r.FormValue("amount")),
-		Description: strings.TrimSpace(r.FormValue("description")),
-		Date:        strings.TrimSpace(r.FormValue("date")),
-	}
+	form := readForm(r)
 
-	fail := func(msg string) {
-		a.render(w, http.StatusBadRequest, "expense_new", PageData{
+	amount, date, msg := a.checkForm(form)
+	if msg != "" {
+		a.renderWithCategories(w, http.StatusBadRequest, "expense_new", PageData{
 			Title: "Новая трата", Active: "new", Form: form, Error: msg,
 		})
+		return
 	}
 
-	amount, err := strconv.ParseFloat(strings.ReplaceAll(form.Amount, ",", "."), 64)
-	if err != nil || amount <= 0 {
-		fail("Сумма должна быть положительным числом.")
+	if _, err := a.repo.Create(amount, form.Description, date, form.CategoryID); err != nil {
+		a.serverError(w, err)
 		return
 	}
-	if form.Description == "" {
-		fail("Описание не может быть пустым.")
-		return
-	}
-	date, err := time.Parse("2006-01-02", form.Date)
+
+	http.Redirect(w, r, "/expenses", http.StatusSeeOther)
+}
+
+func (a *App) ExpenseEditForm(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
-		fail("Укажите корректную дату.")
+		http.NotFound(w, r)
 		return
 	}
 
-	a.store.Add(amount, form.Description, date)
+	expense, err := a.repo.GetByID(id)
+	if errors.Is(err, models.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
 
-	http.Redirect(w, r, "/expenses", http.StatusSeeOther) // 303
+	a.renderWithCategories(w, http.StatusOK, "expense_edit", PageData{
+		Title:  "Редактирование траты",
+		Active: "expenses",
+		ID:     expense.ID,
+		Form: FormValues{
+			Amount:      strconv.FormatFloat(expense.Amount, 'f', 2, 64),
+			Description: expense.Description,
+			Date:        expense.Date.Format("2006-01-02"),
+			CategoryID:  expense.CategoryID,
+		},
+	})
+}
+
+func (a *App) ExpenseUpdate(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "некорректные данные формы", http.StatusBadRequest)
+		return
+	}
+
+	form := readForm(r)
+
+	amount, date, msg := a.checkForm(form)
+	if msg != "" {
+		a.renderWithCategories(w, http.StatusBadRequest, "expense_edit", PageData{
+			Title: "Редактирование траты", Active: "expenses", ID: id, Form: form, Error: msg,
+		})
+		return
+	}
+
+	err = a.repo.Update(id, amount, form.Description, date, form.CategoryID)
+	if errors.Is(err, models.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+
+	http.Redirect(w, r, "/expenses", http.StatusSeeOther)
+}
+
+func (a *App) ExpenseDelete(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	err = a.repo.Delete(id)
+	if errors.Is(err, models.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		a.serverError(w, err)
+		return
+	}
+
+	http.Redirect(w, r, "/expenses", http.StatusSeeOther)
 }

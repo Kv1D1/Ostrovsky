@@ -1,0 +1,29 @@
+{{define "content"}}
+<h1>Редактирование траты</h1>
+
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+<form method="POST" action="/expenses/{{.ID}}/update">
+    <label for="amount">Сумма</label>
+    <input type="text" id="amount" name="amount" inputmode="decimal"
+           value="{{.Form.Amount}}" required>
+
+    <label for="description">Описание</label>
+    <input type="text" id="description" name="description"
+           value="{{.Form.Description}}" required>
+
+    <label for="category">Категория</label>
+    <select id="category" name="category" required>
+        <option value="">Выберите категорию</option>
+        {{range .Categories}}
+        <option value="{{.ID}}" {{if eq .ID $.Form.CategoryID}}selected{{end}}>{{.Name}}</option>
+        {{end}}
+    </select>
+
+    <label for="date">Дата</label>
+    <input type="date" id="date" name="date" value="{{.Form.Date}}" required>
+
+    <button type="submit" class="btn">Сохранить</button>
+    <a href="/expenses">Отмена</a>
+</form>
+{{end}}
