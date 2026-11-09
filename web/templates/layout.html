@@ -5,9 +5,19 @@
         <a class="brand" href="/">Учёт трат</a>
         <nav>
             <a href="/" {{if eq .Active "home"}}class="active"{{end}}>Главная</a>
+            {{if .LoggedIn}}
             <a href="/expenses" {{if eq .Active "expenses"}}class="active"{{end}}>Траты</a>
             <a href="/expenses/new" {{if eq .Active "new"}}class="active"{{end}}>Добавить</a>
+            {{end}}
             <a href="/about" {{if eq .Active "about"}}class="active"{{end}}>О проекте</a>
+            {{if .LoggedIn}}
+            <form class="logout-form" method="POST" action="/logout">
+                <button type="submit" class="link-btn">Выйти</button>
+            </form>
+            {{else}}
+            <a href="/login" {{if eq .Active "login"}}class="active"{{end}}>Войти</a>
+            <a href="/register" {{if eq .Active "register"}}class="active"{{end}}>Регистрация</a>
+            {{end}}
         </nav>
     </div>
 </header>

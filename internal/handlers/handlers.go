@@ -18,6 +18,7 @@ import (
 type PageData struct {
 	Title      string
 	Active     string
+	LoggedIn   bool
 	Expenses   []models.Expense
 	Total      float64
 	Categories []models.Category
@@ -29,6 +30,7 @@ type PageData struct {
 }
 
 type FormValues struct {
+	Email       string
 	Amount      string
 	Description string
 	Date        string
@@ -38,12 +40,20 @@ type FormValues struct {
 type App struct {
 	repo       *models.ExpenseRepository
 	categories *models.CategoryRepository
+	users      *models.UserRepository
+	sessions   *models.SessionRepository
 	pages      map[string]*template.Template
 }
 
-func New(repo *models.ExpenseRepository, categories *models.CategoryRepository, templatesDir string) (*App, error) {
+func New(
+	repo *models.ExpenseRepository,
+	categories *models.CategoryRepository,
+	users *models.UserRepository,
+	sessions *models.SessionRepository,
+	templatesDir string,
+) (*App, error) {
 	layout := filepath.Join(templatesDir, "layout.html")
-	names := []string{"home", "about", "expenses", "expense_new", "expense_edit"}
+	names := []string{"home", "about", "expenses", "expense_new", "expense_edit", "login", "register"}
 
 	pages := make(map[string]*template.Template, len(names))
 	for _, name := range names {
@@ -54,15 +64,24 @@ func New(repo *models.ExpenseRepository, categories *models.CategoryRepository, 
 		}
 		pages[name] = t
 	}
-	return &App{repo: repo, categories: categories, pages: pages}, nil
+	return &App{
+		repo:       repo,
+		categories: categories,
+		users:      users,
+		sessions:   sessions,
+		pages:      pages,
+	}, nil
 }
 
-func (a *App) render(w http.ResponseWriter, status int, page string, data PageData) {
+func (a *App) render(w http.ResponseWriter, r *http.Request, status int, page string, data PageData) {
 	t, ok := a.pages[page]
 	if !ok {
 		http.Error(w, "шаблон не найден", http.StatusInternalServerError)
 		return
 	}
+	// layout по этому флагу решает, что показать в меню
+	data.LoggedIn = userID(r) != 0
+
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "layout", data); err != nil {
 		log.Printf("ошибка рендера %s: %v", page, err)
@@ -74,14 +93,14 @@ func (a *App) render(w http.ResponseWriter, status int, page string, data PageDa
 	buf.WriteTo(w)
 }
 
-func (a *App) renderWithCategories(w http.ResponseWriter, status int, page string, data PageData) {
+func (a *App) renderWithCategories(w http.ResponseWriter, r *http.Request, status int, page string, data PageData) {
 	categories, err := a.categories.GetAll()
 	if err != nil {
 		a.serverError(w, err)
 		return
 	}
 	data.Categories = categories
-	a.render(w, status, page, data)
+	a.render(w, r, status, page, data)
 }
 
 func (a *App) serverError(w http.ResponseWriter, err error) {
@@ -129,11 +148,11 @@ func (a *App) Home(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	a.render(w, http.StatusOK, "home", PageData{Title: "Главная", Active: "home"})
+	a.render(w, r, http.StatusOK, "home", PageData{Title: "Главная", Active: "home"})
 }
 
 func (a *App) About(w http.ResponseWriter, r *http.Request) {
-	a.render(w, http.StatusOK, "about", PageData{Title: "О проекте", Active: "about"})
+	a.render(w, r, http.StatusOK, "about", PageData{Title: "О проекте", Active: "about"})
 }
 
 func (a *App) Ping(w http.ResponseWriter, r *http.Request) {
@@ -148,6 +167,7 @@ func (a *App) Ping(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) ExpensesList(w http.ResponseWriter, r *http.Request) {
+	uid := userID(r)
 	query := r.URL.Query()
 
 	categoryID, _ := strconv.Atoi(query.Get("category"))
@@ -157,7 +177,7 @@ func (a *App) ExpensesList(w http.ResponseWriter, r *http.Request) {
 		DateTo:     readDate(query.Get("to")),
 	}
 
-	expenses, err := a.repo.GetAll(filter)
+	expenses, err := a.repo.GetAll(uid, filter)
 	if err != nil {
 		a.serverError(w, err)
 		return
@@ -168,7 +188,7 @@ func (a *App) ExpensesList(w http.ResponseWriter, r *http.Request) {
 		total += e.Amount
 	}
 
-	a.renderWithCategories(w, http.StatusOK, "expenses", PageData{
+	a.renderWithCategories(w, r, http.StatusOK, "expenses", PageData{
 		Title:    "Список трат",
 		Active:   "expenses",
 		Expenses: expenses,
@@ -178,7 +198,7 @@ func (a *App) ExpensesList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) ExpenseNewForm(w http.ResponseWriter, r *http.Request) {
-	a.renderWithCategories(w, http.StatusOK, "expense_new", PageData{
+	a.renderWithCategories(w, r, http.StatusOK, "expense_new", PageData{
 		Title:  "Новая трата",
 		Active: "new",
 		Form:   FormValues{Date: time.Now().Format("2006-01-02")},
@@ -195,13 +215,13 @@ func (a *App) ExpenseCreate(w http.ResponseWriter, r *http.Request) {
 
 	amount, date, msg := a.checkForm(form)
 	if msg != "" {
-		a.renderWithCategories(w, http.StatusBadRequest, "expense_new", PageData{
+		a.renderWithCategories(w, r, http.StatusBadRequest, "expense_new", PageData{
 			Title: "Новая трата", Active: "new", Form: form, Error: msg,
 		})
 		return
 	}
 
-	if _, err := a.repo.Create(amount, form.Description, date, form.CategoryID); err != nil {
+	if _, err := a.repo.Create(userID(r), amount, form.Description, date, form.CategoryID); err != nil {
 		a.serverError(w, err)
 		return
 	}
@@ -216,7 +236,8 @@ func (a *App) ExpenseEditForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	expense, err := a.repo.GetByID(id)
+	// чужая трата здесь вернёт ErrNotFound, то есть 404
+	expense, err := a.repo.GetByID(userID(r), id)
 	if errors.Is(err, models.ErrNotFound) {
 		http.NotFound(w, r)
 		return
@@ -226,7 +247,7 @@ func (a *App) ExpenseEditForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.renderWithCategories(w, http.StatusOK, "expense_edit", PageData{
+	a.renderWithCategories(w, r, http.StatusOK, "expense_edit", PageData{
 		Title:  "Редактирование траты",
 		Active: "expenses",
 		ID:     expense.ID,
@@ -255,13 +276,13 @@ func (a *App) ExpenseUpdate(w http.ResponseWriter, r *http.Request) {
 
 	amount, date, msg := a.checkForm(form)
 	if msg != "" {
-		a.renderWithCategories(w, http.StatusBadRequest, "expense_edit", PageData{
+		a.renderWithCategories(w, r, http.StatusBadRequest, "expense_edit", PageData{
 			Title: "Редактирование траты", Active: "expenses", ID: id, Form: form, Error: msg,
 		})
 		return
 	}
 
-	err = a.repo.Update(id, amount, form.Description, date, form.CategoryID)
+	err = a.repo.Update(userID(r), id, amount, form.Description, date, form.CategoryID)
 	if errors.Is(err, models.ErrNotFound) {
 		http.NotFound(w, r)
 		return
@@ -281,7 +302,7 @@ func (a *App) ExpenseDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = a.repo.Delete(id)
+	err = a.repo.Delete(userID(r), id)
 	if errors.Is(err, models.ErrNotFound) {
 		http.NotFound(w, r)
 		return

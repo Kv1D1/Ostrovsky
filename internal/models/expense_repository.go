@@ -19,10 +19,13 @@ func NewExpenseRepository(db *sql.DB) *ExpenseRepository {
 	return &ExpenseRepository{db: db}
 }
 
-func (r *ExpenseRepository) Create(amount float64, description string, date time.Time, categoryID int) (int, error) {
+// Во всех методах первым аргументом идёт uid — id владельца.
+// Так чужую трату достать просто невозможно: в каждом запросе есть user_id = ?
+
+func (r *ExpenseRepository) Create(uid int, amount float64, description string, date time.Time, categoryID int) (int, error) {
 	result, err := r.db.Exec(
-		"INSERT INTO expenses (amount, description, date, category_id) VALUES (?, ?, ?, ?)",
-		amount, description, date.Format(dateLayout), categoryID,
+		"INSERT INTO expenses (amount, description, date, category_id, user_id) VALUES (?, ?, ?, ?, ?)",
+		amount, description, date.Format(dateLayout), categoryID, uid,
 	)
 	if err != nil {
 		return 0, err
@@ -34,13 +37,13 @@ func (r *ExpenseRepository) Create(amount float64, description string, date time
 	return int(id), nil
 }
 
-func (r *ExpenseRepository) GetAll(filter ExpenseFilter) ([]Expense, error) {
+func (r *ExpenseRepository) GetAll(uid int, filter ExpenseFilter) ([]Expense, error) {
 	query := `SELECT e.id, e.amount, e.description, e.date, e.category_id, c.name
 		FROM expenses e
 		JOIN categories c ON c.id = e.category_id`
 
-	var conditions []string
-	var args []any
+	conditions := []string{"e.user_id = ?"}
+	args := []any{uid}
 
 	if filter.CategoryID > 0 {
 		conditions = append(conditions, "e.category_id = ?")
@@ -55,9 +58,7 @@ func (r *ExpenseRepository) GetAll(filter ExpenseFilter) ([]Expense, error) {
 		args = append(args, filter.DateTo)
 	}
 
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
+	query += " WHERE " + strings.Join(conditions, " AND ")
 	query += " ORDER BY e.id"
 
 	rows, err := r.db.Query(query, args...)
@@ -86,7 +87,7 @@ func (r *ExpenseRepository) GetAll(filter ExpenseFilter) ([]Expense, error) {
 	return expenses, nil
 }
 
-func (r *ExpenseRepository) GetByID(id int) (Expense, error) {
+func (r *ExpenseRepository) GetByID(uid, id int) (Expense, error) {
 	var e Expense
 	var dateStr string
 
@@ -94,7 +95,7 @@ func (r *ExpenseRepository) GetByID(id int) (Expense, error) {
 		`SELECT e.id, e.amount, e.description, e.date, e.category_id, c.name
 		FROM expenses e
 		JOIN categories c ON c.id = e.category_id
-		WHERE e.id = ?`, id,
+		WHERE e.id = ? AND e.user_id = ?`, id, uid,
 	).Scan(&e.ID, &e.Amount, &e.Description, &dateStr, &e.CategoryID, &e.CategoryName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Expense{}, ErrNotFound
@@ -110,10 +111,10 @@ func (r *ExpenseRepository) GetByID(id int) (Expense, error) {
 	return e, nil
 }
 
-func (r *ExpenseRepository) Update(id int, amount float64, description string, date time.Time, categoryID int) error {
+func (r *ExpenseRepository) Update(uid, id int, amount float64, description string, date time.Time, categoryID int) error {
 	result, err := r.db.Exec(
-		"UPDATE expenses SET amount = ?, description = ?, date = ?, category_id = ? WHERE id = ?",
-		amount, description, date.Format(dateLayout), categoryID, id,
+		"UPDATE expenses SET amount = ?, description = ?, date = ?, category_id = ? WHERE id = ? AND user_id = ?",
+		amount, description, date.Format(dateLayout), categoryID, id, uid,
 	)
 	if err != nil {
 		return err
@@ -128,8 +129,8 @@ func (r *ExpenseRepository) Update(id int, amount float64, description string, d
 	return nil
 }
 
-func (r *ExpenseRepository) Delete(id int) error {
-	result, err := r.db.Exec("DELETE FROM expenses WHERE id = ?", id)
+func (r *ExpenseRepository) Delete(uid, id int) error {
+	result, err := r.db.Exec("DELETE FROM expenses WHERE id = ? AND user_id = ?", id, uid)
 	if err != nil {
 		return err
 	}
